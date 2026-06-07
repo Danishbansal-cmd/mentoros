@@ -23,6 +23,18 @@ interface ChatMessage {
   timestamp: string;
 }
 
+interface WeakArea {
+  topic: string;
+  count: number;
+  lastSeen: string;
+}
+
+interface ReflectionLog {
+  timestamp: string;
+  summary: string;
+  actionItem: string;
+}
+
 interface Roadmap {
   id: string;
   goal: string;
@@ -33,6 +45,8 @@ interface Roadmap {
     total: number;
   };
   chatHistory?: ChatMessage[];
+  weakAreas?: WeakArea[];
+  reflection?: ReflectionLog[];
 }
 
 export default function Home() {
@@ -588,6 +602,57 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                {/* AI Cognitive Profile & Weak Areas Card */}
+                {activeRoadmap.weakAreas && activeRoadmap.weakAreas.length > 0 && (
+                  <div className="bg-gradient-to-br from-indigo-950/20 to-slate-900/40 border border-indigo-950/30 rounded-3xl p-6 space-y-5 shadow-lg shadow-indigo-950/5 relative overflow-hidden">
+                    {/* Glowing highlight orb */}
+                    <div className="absolute -right-12 -top-12 h-24 w-24 bg-indigo-500/10 blur-2xl rounded-full"></div>
+                    
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-8 w-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-sm">
+                        🧠
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white tracking-wide">AI Cognitive Profile & Insights</h3>
+                        <p className="text-[10px] text-indigo-400 font-semibold tracking-wider uppercase leading-none mt-0.5">Struggle Detection & Self-Reflection Logs</p>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
+                      {/* Weak Areas List */}
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Requiring Focus</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {activeRoadmap.weakAreas.map((area, idx) => (
+                            <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-rose-500/5 border border-rose-500/15 rounded-2xl text-xs text-rose-300">
+                              <span className="font-semibold">{area.topic}</span>
+                              <span className="px-1.5 py-0.5 bg-rose-500/10 rounded-lg text-[9px] font-black text-rose-400">{area.count}x</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* Latest Reflection */}
+                      {activeRoadmap.reflection && activeRoadmap.reflection.length > 0 && (
+                        <div className="space-y-2 border-t md:border-t-0 md:border-l border-slate-800/80 md:pl-6">
+                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI Mentor Reflection Logs</h4>
+                          <div className="bg-slate-950/40 border border-slate-900 rounded-2xl p-4 space-y-2">
+                            <p className="text-xs text-slate-300 leading-relaxed italic">
+                              "{activeRoadmap.reflection[activeRoadmap.reflection.length - 1].summary}"
+                            </p>
+                            {activeRoadmap.reflection[activeRoadmap.reflection.length - 1].actionItem && (
+                              <div className="pt-2 border-t border-slate-900/60 flex items-start gap-1.5 text-[10px]">
+                                <span className="text-indigo-400 font-bold shrink-0">💡 Mentor Action:</span>
+                                <span className="text-slate-400">{activeRoadmap.reflection[activeRoadmap.reflection.length - 1].actionItem}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Tasks List */}
                 <div className="space-y-4">
