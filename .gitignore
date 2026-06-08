@@ -1,0 +1,16 @@
+# Virtual Environment
+backend/venv/
+backend/__pycache__/
+backend/workspace/
+
+# Environment Variables
+backend/.env
+
+# Node.js dependencies & builds
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS Files
+.DS_Store
+Thumbs.db

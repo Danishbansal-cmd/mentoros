@@ -69,6 +69,9 @@ export default function Home() {
   const [notesText, setNotesText] = useState<{ [taskId: string]: string }>({});
   const [isSavingNotes, setIsSavingNotes] = useState<{ [taskId: string]: boolean }>({});
 
+  // Chat Agent states
+  const [chatAgentRun, setChatAgentRun] = useState<any>(null);
+
   // Load auth state on mount
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
@@ -264,6 +267,91 @@ export default function Home() {
     }
   };
 
+  const pollChatAgentRun = async (roadmapId: string) => {
+    if (!token) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/roadmaps/${roadmapId}/chat-status`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.run) {
+          setChatAgentRun(data.run);
+          return data.run.status;
+        }
+      }
+    } catch (err) {
+      console.error("Error polling chat agent run:", err);
+    }
+    return null;
+  };
+  // Poll ongoing background agent runs if the active roadmap is selected/refreshed
+  useEffect(() => {
+    if (!activeRoadmap || !token) return;
+    
+    let isMounted = true;
+    let interval: NodeJS.Timeout | null = null;
+    
+    const checkAndPoll = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/roadmaps/${activeRoadmap.id}/chat-status`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (data.run && data.run.status === "running") {
+            setChatAgentRun(data.run);
+            setIsChatLoading(true);
+            
+            interval = setInterval(async () => {
+              try {
+                const statusRes = await fetch(`http://127.0.0.1:8000/roadmaps/${activeRoadmap.id}/chat-status`, {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                });
+                if (statusRes.ok && isMounted) {
+                  const statusData = await statusRes.json();
+                  if (statusData.run) {
+                    setChatAgentRun(statusData.run);
+                    if (statusData.run.status !== "running") {
+                      if (interval) clearInterval(interval);
+                      setIsChatLoading(false);
+                      setChatAgentRun(null);
+                      fetchRoadmaps(token);
+                    }
+                  } else {
+                    if (interval) clearInterval(interval);
+                    setIsChatLoading(false);
+                    setChatAgentRun(null);
+                  }
+                } else {
+                  if (interval) clearInterval(interval);
+                  setIsChatLoading(false);
+                  setChatAgentRun(null);
+                }
+              } catch (err) {
+                if (interval) clearInterval(interval);
+                setIsChatLoading(false);
+                setChatAgentRun(null);
+              }
+            }, 1500);
+          }
+        }
+      } catch (err) {}
+    };
+    
+    checkAndPoll();
+    
+    return () => {
+      isMounted = false;
+      if (interval) clearInterval(interval);
+    };
+  }, [activeRoadmap?.id]);
   // Scroll to bottom of chat history when messages or loading state changes
   useEffect(() => {
     if (chatEndRef.current) {
@@ -320,34 +408,66 @@ export default function Home() {
 
       if (!res.ok) {
         const errData = await res.json();
-        throw new Error(errData.detail || "Failed to get response from AI mentor.");
+        throw new Error(errData.detail || "Failed to trigger AI mentor agent.");
       }
 
       const data = await res.json();
-      // data contains: { response: string, roadmap: Task[], chatHistory: ChatMessage[] }
       
-      const serverUpdatedRoadmap: Roadmap = {
-        id: currentActive.id,
-        goal: currentActive.goal,
-        roadmap: data.roadmap,
-        createdAt: currentActive.createdAt,
-        progress: {
-          completed: data.roadmap.filter((t: Task) => t.status === "completed").length,
-          total: data.roadmap.length,
-        },
-        chatHistory: data.chatHistory,
+      // Update local state with the returned chat history (with the user's new message)
+      const intermediateRoadmap: Roadmap = {
+        ...currentActive,
+        chatHistory: data.chatHistory
       };
-
-      setActiveRoadmap(serverUpdatedRoadmap);
+      setActiveRoadmap(intermediateRoadmap);
       setRoadmaps((prev) =>
-        prev.map((r) => (r.id === currentActive.id ? serverUpdatedRoadmap : r))
+        prev.map((r) => (r.id === currentActive.id ? intermediateRoadmap : r))
       );
+      
+      // Start polling loop!
+      setChatAgentRun({ status: "running", logs: [], summary: "" });
+      
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`http://127.0.0.1:8000/roadmaps/${currentActive.id}/chat-status`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.run) {
+              setChatAgentRun(statusData.run);
+              
+              if (statusData.run.status !== "running") {
+                clearInterval(pollInterval);
+                setIsChatLoading(false);
+                setChatAgentRun(null);
+                
+                // Once completed, retrieve the updated roadmap and fresh chatHistory
+                fetchRoadmaps(token);
+              }
+            } else {
+              clearInterval(pollInterval);
+              setIsChatLoading(false);
+              setChatAgentRun(null);
+            }
+          } else {
+            clearInterval(pollInterval);
+            setIsChatLoading(false);
+            setChatAgentRun(null);
+          }
+        } catch (pollErr) {
+          clearInterval(pollInterval);
+          setIsChatLoading(false);
+          setChatAgentRun(null);
+        }
+      }, 1500);
+
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to communicate with AI mentor.");
       setActiveRoadmap(originalActiveRoadmap);
       setRoadmaps(originalRoadmaps);
-    } finally {
       setIsChatLoading(false);
     }
   };
@@ -795,7 +915,6 @@ export default function Home() {
                                   </ul>
                                 </div>
                               )}
-
                               {/* Notes section */}
                               <div className="pt-2 border-t border-slate-900/60">
                                 <div className="flex items-center justify-between mb-1.5">
@@ -869,13 +988,44 @@ export default function Home() {
                     );
                   })}
                   {isChatLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl rounded-bl-none p-4 text-sm flex items-center gap-2">
-                        <svg className="animate-spin h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        <span>Mentor is processing...</span>
+                    <div className="flex flex-col gap-2 justify-start max-w-[85%]">
+                      <div className="bg-slate-900 border border-slate-800 text-slate-400 rounded-2xl rounded-bl-none p-4 text-xs flex flex-col gap-3 shadow-md">
+                        <div className="flex items-center gap-2">
+                          <svg className="animate-spin h-3.5 w-3.5 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span className="font-semibold text-slate-300">AI Mentor processing goal query...</span>
+                        </div>
+                        
+                        {/* Live Thinking Terminal logs inside chat bubble */}
+                        {chatAgentRun && chatAgentRun.logs && chatAgentRun.logs.length > 0 && (
+                          <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-3 font-mono text-[9px] text-slate-400 space-y-1.5 max-h-40 overflow-y-auto leading-relaxed scrollbar-thin select-text">
+                            {chatAgentRun.logs.map((log: any, lidx: number) => {
+                              let prefix = "[INFO]";
+                              let color = "text-slate-400";
+                              if (log.type === "thought") {
+                                prefix = "[THOUGHT]";
+                                color = "text-indigo-400 italic";
+                              } else if (log.type === "tool_call") {
+                                prefix = "[ACT]";
+                                color = "text-amber-400 font-medium";
+                              } else if (log.type === "tool_response") {
+                                prefix = "[OBSERVATION]";
+                                color = "text-cyan-400";
+                              } else if (log.type === "error") {
+                                prefix = "[ERROR]";
+                                color = "text-rose-400 font-bold";
+                              }
+                              return (
+                                <div key={lidx} className="leading-snug whitespace-pre-wrap break-all">
+                                  <span className={`${color} mr-1 font-bold`}>{prefix}</span>
+                                  <span className={color}>{log.message}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

@@ -22,10 +22,11 @@ def _generate_content_with_fallback(client: genai.Client, prompt: str, response_
     Query Gemini client with fallback models and retry mechanism on 503/transient/quota errors.
     """
     models_to_try = [
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash-lite',
         'gemini-2.0-flash', 
-        'gemini-2.0-flash-lite', 
-        'gemini-flash-latest',
-        'gemini-2.5-flash-lite'
+        'gemini-flash-latest'
     ]
     response_text = None
     last_error = None
@@ -54,11 +55,10 @@ def _generate_content_with_fallback(client: genai.Client, prompt: str, response_
                 last_error = e
                 print(f"Error with model {model} (attempt {attempt + 1}): {e}")
                 err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    print(f"Quota exhausted for {model}. Skipping remaining attempts.")
-                    break
                 if attempt < 2:
-                    time.sleep(2 ** attempt)
+                    sleep_seconds = 8 if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) else (2 ** attempt)
+                    print(f"Sleeping {sleep_seconds}s before retry...")
+                    time.sleep(sleep_seconds)
         if response_text:
             break
             

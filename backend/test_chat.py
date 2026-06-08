@@ -59,7 +59,7 @@ def test_chat_under_roadmap_flow():
         print("Initial chat history successfully verified in /roadmaps list")
 
         # 5. Send message asking a question
-        chat_msg = "What is a container image?"
+        chat_msg = "What is a container image? Keep your answer short."
         chat_response = client.post(
             f"/roadmaps/{roadmap_id}/chat",
             json={"message": chat_msg},
@@ -67,20 +67,46 @@ def test_chat_under_roadmap_flow():
         )
         assert chat_response.status_code == 200, f"Chat endpoint failed: {chat_response.text}"
         chat_data = chat_response.json()
+        assert chat_data["success"] is True
+        assert chat_data["status"] == "agent_running"
         
-        assert "response" in chat_data
-        assert "roadmap" in chat_data
-        assert "chatHistory" in chat_data
+        # Poll chat agent status
+        import time
+        print("Polling chat agent status...")
+        agent_completed = False
+        printed_logs = set()
+        for _ in range(60): # timeout after 60 seconds
+            status_response = client.get(f"/roadmaps/{roadmap_id}/chat-status", headers=headers)
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            run = status_data.get("run")
+            if run:
+                for log in run.get("logs", []):
+                    log_key = (log.get("timestamp"), log.get("message"))
+                    if log_key not in printed_logs:
+                        print(f"[{log.get('type')}] {log.get('message')}")
+                        printed_logs.add(log_key)
+                
+                if run.get("status") in ["completed", "failed"]:
+                    agent_completed = True
+                    print(f"Agent finished with status: {run.get('status')}")
+                    if run.get("status") == "completed":
+                        print("AI Summary:", run.get("summary"))
+                    break
+            time.sleep(1)
+            
+        assert agent_completed, "Agent did not finish in time"
         
-        # Verify message count increased in history (user message + AI response = 4 total)
-        assert len(chat_data["chatHistory"]) == 4
-        assert chat_data["chatHistory"][-2]["content"] == chat_msg
-        assert chat_data["chatHistory"][-1]["role"] == "model"
-        print("Chat response verified successfully")
-        print("AI Response:", chat_data["response"])
+        # Verify chat history updated in DB
+        list_response = client.get("/roadmaps", headers=headers)
+        roadmap = list_response.json()[0]
+        assert len(roadmap["chatHistory"]) == 4
+        assert roadmap["chatHistory"][-2]["content"] == chat_msg
+        assert roadmap["chatHistory"][-1]["role"] == "model"
+        print("Chat query verified successfully")
 
         # 6. Send message asking to edit the roadmap
-        edit_msg = "Please add a weekend milestone to practice Docker Compose."
+        edit_msg = "Please add a weekend milestone to practice Docker Compose after milestone 1, and verify it with a simple print('Compose OK') python execution in the sandbox."
         edit_response = client.post(
             f"/roadmaps/{roadmap_id}/chat",
             json={"message": edit_msg},
@@ -88,13 +114,42 @@ def test_chat_under_roadmap_flow():
         )
         assert edit_response.status_code == 200, f"Edit roadmap chat failed: {edit_response.text}"
         edit_data = edit_response.json()
+        assert edit_data["success"] is True
         
-        assert len(edit_data["chatHistory"]) == 6
+        print("Polling agent edit status...")
+        agent_completed = False
+        printed_logs = set()
+        for _ in range(90): # timeout after 90 seconds
+            status_response = client.get(f"/roadmaps/{roadmap_id}/chat-status", headers=headers)
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            run = status_data.get("run")
+            if run:
+                for log in run.get("logs", []):
+                    log_key = (log.get("timestamp"), log.get("message"))
+                    if log_key not in printed_logs:
+                        print(f"[{log.get('type')}] {log.get('message')}")
+                        printed_logs.add(log_key)
+                
+                if run.get("status") in ["completed", "failed"]:
+                    agent_completed = True
+                    print(f"Agent finished with status: {run.get('status')}")
+                    if run.get("status") == "completed":
+                        print("AI Summary:", run.get("summary"))
+                    break
+            time.sleep(1)
+            
+        assert agent_completed, "Agent did not finish in time for editing"
+        
+        # Verify tasks count increased
+        list_response = client.get("/roadmaps", headers=headers)
+        roadmap = list_response.json()[0]
+        assert len(roadmap["roadmap"]) > len(roadmap_tasks)
         print("Edit request response received")
-        print("Updated Tasks count:", len(edit_data["roadmap"]))
+        print("Updated Tasks count:", len(roadmap["roadmap"]))
 
         # 7. Update status and notes of a task using its ID
-        first_task = edit_data["roadmap"][0]
+        first_task = roadmap["roadmap"][0]
         task_id = first_task["_id"]
         
         patch_response = client.patch(
