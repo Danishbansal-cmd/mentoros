@@ -6,3 +6,4 @@ requests
 uvicorn
 google-genai
 cryptography
+bcrypt
