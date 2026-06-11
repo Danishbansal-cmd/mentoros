@@ -7,5 +7,5 @@ uvicorn
 google-genai
 cryptography
 bcrypt
-jwt
+pyjwt
 mcp
