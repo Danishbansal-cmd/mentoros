@@ -95,7 +95,11 @@ async def search_resources_mcp(query: str) -> str:
 @mcp_server.tool()
 async def modify_roadmap_milestones_mcp(roadmap_id: str, updated_roadmap: List[MilestoneItem]) -> str:
     """
-    Modifies or updates the roadmap milestone steps in the database. Exposes collection updates via Model Context Protocol.
+    Modifies or updates the roadmap milestone steps in the database.
+    
+    IMPORTANT: You must pass the COMPLETE list of all milestone items representing the new state of the roadmap. 
+    You MUST include all existing milestones that you want to keep, in addition to any new, updated, or reordered milestones. 
+    Any milestone omitted from `updated_roadmap` will be permanently deleted from the database.
     """
     try:
         roadmap_obj_id = ObjectId(roadmap_id)
@@ -269,11 +273,12 @@ Work step-by-step:
 
 CRITICAL INSTRUCTIONS FOR TOOL USAGE:
 - If the user asks to add, remove, update, or reorganize milestones, you MUST call the modify_roadmap_milestones_mcp tool. You are forbidden from describing the modifications in your FINAL ANSWER without first executing the modify_roadmap_milestones_mcp tool.
+- When calling modify_roadmap_milestones_mcp, you MUST pass the COMPLETE list of all milestones (all existing ones you want to keep, plus any new or edited ones). Do NOT just pass the new or edited milestones, otherwise the existing ones will be permanently deleted.
 - If the user asks you to run, test, or verify python code, you MUST call the execute_code_sandbox_mcp tool, wait for its observation, and then report the results in your FINAL ANSWER.
 
 Available FastMCP Tools:
 - search_resources_mcp(query: str): To get verified links from the database to suggest.
-- modify_roadmap_milestones_mcp(roadmap_id: str, updated_roadmap: List[MilestoneItem]): If they ask to add, remove, change, update, or reorganize milestones.
+- modify_roadmap_milestones_mcp(roadmap_id: str, updated_roadmap: List[MilestoneItem]): If they ask to add, remove, change, update, or reorganize milestones. IMPORTANT: You must pass the complete list of all milestones (existing + new/modified). Any omitted milestones will be deleted.
 - execute_code_sandbox_mcp(roadmap_id: str, code: str): To test python script syntax or perform calculations.
 """
 
