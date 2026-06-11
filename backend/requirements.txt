@@ -8,3 +8,4 @@ google-genai
 cryptography
 bcrypt
 jwt
+mcp
