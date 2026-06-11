@@ -7,3 +7,4 @@ uvicorn
 google-genai
 cryptography
 bcrypt
+jwt
