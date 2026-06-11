@@ -10,4 +10,5 @@ pymongo
 python-dotenv
 requests
 uvicorn
+google-genai
 cryptography
