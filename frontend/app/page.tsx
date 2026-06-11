@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import Auth from "./components/Auth";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 interface Task {
   _id: string;
   title: string;
@@ -102,7 +104,7 @@ export default function Home() {
 
   const fetchRoadmaps = async (authToken: string) => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/roadmaps", {
+      const res = await fetch(`${API_BASE_URL}/roadmaps`, {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
@@ -138,7 +140,7 @@ export default function Home() {
     setError(null);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/generate-roadmap", {
+      const res = await fetch(`${API_BASE_URL}/generate-roadmap`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -199,7 +201,7 @@ export default function Home() {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/roadmaps/${roadmapId}/tasks/${taskId}`, {
+      const res = await fetch(`${API_BASE_URL}/roadmaps/${roadmapId}/tasks/${taskId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -227,7 +229,7 @@ export default function Home() {
     setIsSavingNotes((prev) => ({ ...prev, [taskId]: true }));
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/roadmaps/${roadmapId}/tasks/${taskId}`, {
+      const res = await fetch(`${API_BASE_URL}/roadmaps/${roadmapId}/tasks/${taskId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -267,10 +269,49 @@ export default function Home() {
     }
   };
 
+  const handleDeleteRoadmap = async (roadmapId: string) => {
+    if (!token) return;
+
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete this roadmap? This will permanently erase all tasks, notes, chat history, and agent workspace logs."
+    );
+    if (!confirmDelete) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/roadmaps/${roadmapId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to delete roadmap from server.");
+      }
+
+      // Remove from list
+      const updatedRoadmaps = roadmaps.filter((r) => r.id !== roadmapId);
+      setRoadmaps(updatedRoadmaps);
+
+      // If active roadmap was deleted, change selection
+      if (activeRoadmap?.id === roadmapId) {
+        if (updatedRoadmaps.length > 0) {
+          setActiveRoadmap(updatedRoadmaps[0]);
+        } else {
+          setActiveRoadmap(null);
+          setIsGeneratingMode(true);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Could not delete roadmap.");
+    }
+  };
+
   const pollChatAgentRun = async (roadmapId: string) => {
     if (!token) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/roadmaps/${roadmapId}/chat-status`, {
+      const res = await fetch(`${API_BASE_URL}/roadmaps/${roadmapId}/chat-status`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -296,7 +337,7 @@ export default function Home() {
     
     const checkAndPoll = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/roadmaps/${activeRoadmap.id}/chat-status`, {
+        const res = await fetch(`${API_BASE_URL}/roadmaps/${activeRoadmap.id}/chat-status`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -309,7 +350,7 @@ export default function Home() {
             
             interval = setInterval(async () => {
               try {
-                const statusRes = await fetch(`http://127.0.0.1:8000/roadmaps/${activeRoadmap.id}/chat-status`, {
+                const statusRes = await fetch(`${API_BASE_URL}/roadmaps/${activeRoadmap.id}/chat-status`, {
                   headers: {
                     Authorization: `Bearer ${token}`,
                   },
@@ -397,7 +438,7 @@ export default function Home() {
     );
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/roadmaps/${currentActive.id}/chat`, {
+      const res = await fetch(`${API_BASE_URL}/roadmaps/${currentActive.id}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -428,7 +469,7 @@ export default function Home() {
       
       const pollInterval = setInterval(async () => {
         try {
-          const statusRes = await fetch(`http://127.0.0.1:8000/roadmaps/${currentActive.id}/chat-status`, {
+          const statusRes = await fetch(`${API_BASE_URL}/roadmaps/${currentActive.id}/chat-status`, {
             headers: {
               Authorization: `Bearer ${token}`,
             },
@@ -528,34 +569,47 @@ export default function Home() {
                 const percentage = Math.round((completed / total) * 100);
 
                 return (
-                  <button
-                    key={r.id}
-                    onClick={() => {
-                      setActiveRoadmap(r);
-                      setIsGeneratingMode(false);
-                      setError(null);
-                    }}
-                    className={`w-full text-left p-3.5 rounded-2xl border transition duration-200 group relative ${
-                      isActive
-                        ? "bg-slate-900 border-indigo-500/50 text-white shadow-lg shadow-indigo-500/5"
-                        : "bg-slate-900/40 border-transparent hover:bg-slate-900/60 hover:border-slate-800 text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <p className="font-semibold text-sm line-clamp-1 pr-4">{r.goal}</p>
-                    
-                    <div className="mt-2.5 flex items-center justify-between text-[11px] font-medium text-slate-500 group-hover:text-slate-400">
-                      <span>{percentage}% completed</span>
-                      <span>{completed}/{total} tasks</span>
-                    </div>
+                  <div key={r.id} className="relative group/sidebaritem">
+                    <button
+                      onClick={() => {
+                        setActiveRoadmap(r);
+                        setIsGeneratingMode(false);
+                        setError(null);
+                      }}
+                      className={`w-full text-left p-3.5 rounded-2xl border transition duration-200 relative ${
+                        isActive
+                          ? "bg-slate-900 border-indigo-500/50 text-white shadow-lg shadow-indigo-500/5"
+                          : "bg-slate-900/40 border-transparent hover:bg-slate-900/60 hover:border-slate-800 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <p className="font-semibold text-sm line-clamp-1 pr-8">{r.goal}</p>
+                      
+                      <div className="mt-2.5 flex items-center justify-between text-[11px] font-medium text-slate-500 group-hover:text-slate-400">
+                        <span>{percentage}% completed</span>
+                        <span>{completed}/{total} tasks</span>
+                      </div>
 
-                    {/* Simple progress bar */}
-                    <div className="mt-1.5 h-1 w-full bg-slate-950 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-indigo-500 transition-all duration-300"
-                        style={{ width: `${percentage}%` }}
-                      ></div>
-                    </div>
-                  </button>
+                      {/* Simple progress bar */}
+                      <div className="mt-1.5 h-1 w-full bg-slate-950 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-indigo-500 transition-all duration-300"
+                          style={{ width: `${percentage}%` }}
+                        ></div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRoadmap(r.id);
+                      }}
+                      className="absolute right-3 top-3.5 p-1.5 rounded-lg bg-slate-950/40 hover:bg-rose-950/40 border border-transparent hover:border-rose-900/30 text-slate-500 hover:text-rose-400 opacity-0 group-hover/sidebaritem:opacity-100 transition-all duration-150 z-20"
+                      title="Delete Goal"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
                 );
               })
             )}

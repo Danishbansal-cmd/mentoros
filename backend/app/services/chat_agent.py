@@ -279,11 +279,20 @@ Available FastMCP Tools:
 
         # Map native Python MCP tools directly to Gemini AsyncClient with fallback models
         models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-2.5-pro"]
-        chat_session = None
+        
+        # Map tools for dynamic call dispatching in ReAct loop
+        tool_lookup = {
+            "search_resources_mcp": search_resources_mcp,
+            "modify_roadmap_milestones_mcp": modify_roadmap_milestones_mcp,
+            "execute_code_sandbox_mcp": execute_code_sandbox_mcp
+        }
+
+        success = False
         last_error = None
+
         for model_name in models_to_try:
             try:
-                add_chat_agent_log(roadmap_id, f"Initializing chat session with model: {model_name}...", "info")
+                add_chat_agent_log(roadmap_id, f"Initializing session with model: {model_name}...", "info")
                 chat_session = client.aio.chats.create(
                     model=model_name,
                     config=types.GenerateContentConfig(
@@ -292,137 +301,112 @@ Available FastMCP Tools:
                         temperature=0.2
                     )
                 )
-                break
-            except Exception as e:
-                last_error = e
-                add_chat_agent_log(roadmap_id, f"Failed initializing with {model_name}: {str(e)}", "warning")
-                
-        if not chat_session:
-            raise last_error if last_error else Exception("Failed to initialize chat session on all models")
 
-        # Map tools for dynamic call dispatching in ReAct loop
-        tool_lookup = {
-            "search_resources_mcp": search_resources_mcp,
-            "modify_roadmap_milestones_mcp": modify_roadmap_milestones_mcp,
-            "execute_code_sandbox_mcp": execute_code_sandbox_mcp
-        }
+                current_prompt = f"User Query: {user_message}"
+                max_steps = 6
+                final_answer = ""
+                completed = False
 
-        current_prompt = f"User Query: {user_message}"
-        max_steps = 6
-        final_answer = ""
-        completed = False
-
-        for step in range(max_steps):
-            add_chat_agent_log(roadmap_id, f"Reasoning step {step + 1}/{max_steps}...", "info")
-            
-            # Send message with retry handling for transient API issues
-            response = None
-            max_attempts = 5
-            for attempt in range(max_attempts):
-                try:
-                    response = await chat_session.send_message(current_prompt)
-                    break
-                except Exception as send_err:
-                    err_str = str(send_err)
-                    if attempt < max_attempts - 1 and ("503" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "UNAVAILABLE" in err_str):
-                        # Use a longer sleep for rate limit errors to allow the 1-minute quota window to slide
-                        sleep_seconds = (6 * (attempt + 1)) if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) else (2 ** attempt)
-                        add_chat_agent_log(roadmap_id, f"Gemini request failed (quota/rate-limit). Retrying in {sleep_seconds}s...", "warning")
-                        await asyncio.sleep(sleep_seconds)
-                    else:
-                        raise send_err
-            
-            if response.function_calls:
-                for call in response.function_calls:
-                    tool_name = call.name
-                    tool_args = call.args
+                for step in range(max_steps):
+                    add_chat_agent_log(roadmap_id, f"[{model_name}] Reasoning step {step + 1}/{max_steps}...", "info")
                     
-                    if response.text:
-                        add_chat_agent_log(roadmap_id, response.text, "thought")
-                        
-                    add_chat_agent_log(roadmap_id, f"Executing FastMCP tool call: {tool_name}", "tool_call")
-                    
-                    tool_func = tool_lookup.get(tool_name)
-                    if tool_func:
+                    # Send message with retry handling for transient API issues
+                    response = None
+                    max_attempts = 3
+                    for attempt in range(max_attempts):
                         try:
-                            # Execute async tool wrapper
-                            result = await tool_func(**tool_args)
-                        except Exception as e:
-                            result = f"Exception executing tool: {str(e)}"
+                            response = await chat_session.send_message(current_prompt)
+                            break
+                        except Exception as send_err:
+                            err_str = str(send_err)
+                            is_quota_exhausted = "RESOURCE_EXHAUSTED" in err_str or "daily" in err_str or "limit: 20" in err_str or "limit: 15" in err_str
+                            if is_quota_exhausted:
+                                raise send_err
+                                
+                            if attempt < max_attempts - 1 and ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str):
+                                sleep_seconds = 2 ** attempt
+                                add_chat_agent_log(roadmap_id, f"Transient error. Retrying in {sleep_seconds}s...", "warning")
+                                await asyncio.sleep(sleep_seconds)
+                            else:
+                                raise send_err
+                    
+                    if response.function_calls:
+                        for call in response.function_calls:
+                            tool_name = call.name
+                            tool_args = call.args
+                            
+                            if response.text:
+                                add_chat_agent_log(roadmap_id, response.text, "thought")
+                                
+                            add_chat_agent_log(roadmap_id, f"Executing FastMCP tool call: {tool_name}", "tool_call")
+                            
+                            tool_func = tool_lookup.get(tool_name)
+                            if tool_func:
+                                try:
+                                    result = await tool_func(**tool_args)
+                                except Exception as e:
+                                    result = f"Exception executing tool: {str(e)}"
+                            else:
+                                result = f"Error: Tool {tool_name} not found."
+                                
+                            add_chat_agent_log(roadmap_id, f"FastMCP Tool observation: {str(result)[:400]}...", "tool_response")
+                            
+                            current_prompt = types.Part.from_function_response(
+                                name=tool_name,
+                                response={"result": result}
+                            )
                     else:
-                        result = f"Error: Tool {tool_name} not found."
+                        text_out = response.text or ""
+                        add_chat_agent_log(roadmap_id, text_out, "thought")
                         
-                    add_chat_agent_log(roadmap_id, f"FastMCP Tool observation: {str(result)[:400]}...", "tool_response")
-                    
-                    current_prompt = types.Part.from_function_response(
-                        name=tool_name,
-                        response={"result": result}
+                        if "FINAL ANSWER:" in text_out:
+                            completed = True
+                            final_answer = text_out.split("FINAL ANSWER:")[-1].strip()
+                            break
+                            
+                        current_prompt = "Please proceed to finalize your thoughts and write the response starting with 'FINAL ANSWER:'."
+
+                if completed and final_answer:
+                    # Update chat history in MongoDB
+                    new_model_msg = {
+                        "role": "model",
+                        "content": final_answer,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    roadmaps_collection.update_one(
+                        {"_id": roadmap_obj_id},
+                        {
+                            "$push": {"chatHistory": new_model_msg},
+                            "$set": {"updatedAt": datetime.utcnow()}
+                        }
                     )
-            else:
-                text_out = response.text or ""
-                add_chat_agent_log(roadmap_id, text_out, "thought")
-                
-                if "FINAL ANSWER:" in text_out:
-                    completed = True
-                    final_answer = text_out.split("FINAL ANSWER:")[-1].strip()
-                    break
                     
-                current_prompt = "Please proceed to finalize your thoughts and write the response starting with 'FINAL ANSWER:'."
+                    # Run offline chat reflection for cognitive profile logs
+                    fresh_doc = roadmaps_collection.find_one({"_id": roadmap_obj_id})
+                    from app.services.roadmap import reflect_on_chat
+                    reflect_on_chat(client, roadmap_id, user_id, fresh_doc.get("chatHistory", []))
+                    
+                    db["chat_agent_runs"].update_one(
+                        {"roadmapId": roadmap_id, "status": "running"},
+                        {
+                            "$set": {
+                                "status": "completed",
+                                "summary": final_answer,
+                                "updatedAt": datetime.utcnow()
+                            }
+                        }
+                    )
+                    success = True
+                    break
+                else:
+                    raise Exception("Agent did not reach FINAL ANSWER.")
 
-        if completed and final_answer:
-            # Update chat history in MongoDB
-            new_model_msg = {
-                "role": "model",
-                "content": final_answer,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            roadmaps_collection.update_one(
-                {"_id": roadmap_obj_id},
-                {
-                    "$push": {"chatHistory": new_model_msg},
-                    "$set": {"updatedAt": datetime.utcnow()}
-                }
-            )
-            
-            # Run offline chat reflection for cognitive profile logs
-            fresh_doc = roadmaps_collection.find_one({"_id": roadmap_obj_id})
-            from app.services.roadmap import reflect_on_chat
-            reflect_on_chat(client, roadmap_id, user_id, fresh_doc.get("chatHistory", []))
-            
-            db["chat_agent_runs"].update_one(
-                {"roadmapId": roadmap_id, "status": "running"},
-                {
-                    "$set": {
-                        "status": "completed",
-                        "summary": final_answer,
-                        "updatedAt": datetime.utcnow()
-                    }
-                }
-            )
-        else:
-            db["chat_agent_runs"].update_one(
-                {"roadmapId": roadmap_id, "status": "running"},
-                {
-                    "$set": {
-                        "status": "failed",
-                        "summary": "Agent did not reach FINAL ANSWER. Iteration limit reached.",
-                        "updatedAt": datetime.utcnow()
-                    }
-                }
-            )
-            fallback_msg = {
-                "role": "model",
-                "content": "I apologize, but I encountered an error while processing your request. Please try again.",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            roadmaps_collection.update_one(
-                {"_id": roadmap_obj_id},
-                {
-                    "$push": {"chatHistory": fallback_msg},
-                    "$set": {"updatedAt": datetime.utcnow()}
-                }
-            )
+            except Exception as model_err:
+                last_error = model_err
+                add_chat_agent_log(roadmap_id, f"Model {model_name} run failed: {str(model_err)}. Falling back to next model...", "warning")
 
+        if not success:
+            raise last_error if last_error else Exception("All models failed to generate response.")
     except Exception as e:
         print(f"Exception executing async FastMCP agent: {e}", file=sys.stderr)
         add_chat_agent_log(roadmap_id, f"Fatal FastMCP client loop error: {str(e)}", "error")

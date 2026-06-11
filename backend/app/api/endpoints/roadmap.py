@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 # pyrefly: ignore [missing-import]
 from bson import ObjectId
@@ -248,3 +249,44 @@ def get_chat_agent_status(
         latest_run["updatedAt"] = latest_run["updatedAt"].isoformat()
         
     return {"run": latest_run}
+
+@router.delete("/roadmaps/{roadmap_id}")
+def delete_roadmap(
+    roadmap_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete a specific roadmap along with all associated data (chat history, agent runs, etc.).
+    """
+    user_id = str(current_user["_id"])
+    
+    try:
+        roadmap_obj_id = ObjectId(roadmap_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid roadmap ID format."
+        )
+        
+    roadmap_doc = roadmaps_collection.find_one({"_id": roadmap_obj_id, "userId": user_id})
+    if not roadmap_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap not found or unauthorized access."
+        )
+        
+    # Delete the roadmap document
+    roadmaps_collection.delete_one({"_id": roadmap_obj_id})
+    
+    # Delete all associated agent runs
+    db["chat_agent_runs"].delete_many({"roadmapId": roadmap_id})
+    
+    # Clean up workspace directory if it exists
+    from app.services.chat_agent import clear_workspace
+    try:
+        clear_workspace(roadmap_id)
+    except Exception as e:
+        print(f"Error clearing workspace for roadmap {roadmap_id}: {e}")
+        
+    return {"success": True, "message": "Roadmap and all associated data successfully deleted."}
+

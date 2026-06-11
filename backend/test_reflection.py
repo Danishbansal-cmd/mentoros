@@ -63,18 +63,45 @@ def test_reflection_and_memory():
         )
         assert chat_response.status_code == 200, f"Chat failed: {chat_response.text}"
         chat_data = chat_response.json()
-        
-        print("\nAI Response (first snippet):", chat_data["response"][:200] + "...")
-        print("\nChecking updated cognitive profile...")
-        print("Weak Areas:", chat_data.get("weakAreas"))
-        print("Reflections:", chat_data.get("reflection"))
+        assert chat_data["success"] is True
+        assert chat_data["status"] == "agent_running"
 
-        assert len(chat_data.get("weakAreas", [])) > 0, "AI reflection failed to identify any weak areas!"
-        assert len(chat_data.get("reflection", [])) > 0, "AI reflection failed to write reflection logs!"
+        # Poll chat agent status
+        import time
+        print("Polling chat agent status...")
+        agent_completed = False
+        for _ in range(60): # timeout after 60 seconds
+            status_response = client.get(f"/roadmaps/{roadmap_id}/chat-status", headers=headers)
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            run = status_data.get("run")
+            if run and run.get("status") in ["completed", "failed"]:
+                agent_completed = True
+                print(f"Agent finished with status: {run.get('status')}")
+                if run.get("status") == "completed":
+                    print("\nAI Response (first snippet):", run.get("summary", "")[:200] + "...")
+                break
+            time.sleep(1)
+        assert agent_completed, "Agent did not finish in time"
+
+        # Get updated roadmap data
+        list_response = client.get("/roadmaps", headers=headers)
+        assert list_response.status_code == 200
+        roadmaps = list_response.json()
+        roadmap = roadmaps[0]
+
+        print("\nChecking updated cognitive profile...")
+        print("Weak Areas:", roadmap.get("weakAreas"))
+        print("Reflections:", roadmap.get("reflection"))
+
+        assert len(roadmap.get("weakAreas", [])) > 0, "AI reflection failed to identify any weak areas!"
+        assert len(roadmap.get("reflection", [])) > 0, "AI reflection failed to write reflection logs!"
 
         print("\nFirst reflection round verified successfully.")
 
         # 5. Send second message indicating struggle with Docker Network to test incremental counts/additions
+        print("\nWaiting 40 seconds to avoid Gemini Free Tier rate limits...")
+        time.sleep(40)
         chat_msg_2 = "Can we talk about Docker Network? I don't understand how container networking works, I find it extremely hard."
         print(f"\nUser: {chat_msg_2}")
         chat_response_2 = client.post(
@@ -84,12 +111,31 @@ def test_reflection_and_memory():
         )
         assert chat_response_2.status_code == 200
         chat_data_2 = chat_response_2.json()
+        assert chat_data_2["success"] is True
 
-        print("\nWeak Areas Round 2:", chat_data_2.get("weakAreas"))
-        print("Reflections Round 2:", chat_data_2.get("reflection"))
+        print("Polling agent status for round 2...")
+        agent_completed_2 = False
+        for _ in range(60): # timeout after 60 seconds
+            status_response = client.get(f"/roadmaps/{roadmap_id}/chat-status", headers=headers)
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            run = status_data.get("run")
+            if run and run.get("status") in ["completed", "failed"]:
+                agent_completed_2 = True
+                print(f"Agent finished round 2 with status: {run.get('status')}")
+                break
+            time.sleep(1)
+        assert agent_completed_2, "Agent did not finish in time for round 2"
 
-        assert len(chat_data_2.get("weakAreas", [])) >= 1
-        assert len(chat_data_2.get("reflection", [])) == 2, "Reflection count did not increment to 2!"
+        # Get final roadmap data
+        list_response_2 = client.get("/roadmaps", headers=headers)
+        roadmap_2 = list_response_2.json()[0]
+
+        print("\nWeak Areas Round 2:", roadmap_2.get("weakAreas"))
+        print("Reflections Round 2:", roadmap_2.get("reflection"))
+
+        assert len(roadmap_2.get("weakAreas", [])) >= 1
+        assert len(roadmap_2.get("reflection", [])) == 2, "Reflection count did not increment to 2!"
 
         print("\nSecond reflection round verified successfully.")
 
